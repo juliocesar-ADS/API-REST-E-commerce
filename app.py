@@ -1,11 +1,6 @@
 from flask import Flask, jsonify, request
 
-produtos = [
-    {"id": 1, "nome": "Teclado", "preco": 150.00, "estoque": 10},
-    {"id": 2, "nome": "Mouse", "preco": 80.00, "estoque": 20},
-    {"id": 3, "nome": "Monitor", "preco": 1200.00, "estoque": 5},
-    {"id": 4, "nome": "Cadeira Gamer", "preco": 800.00, "estoque": 3},
-    {"id": 5, "nome": "Headset", "preco": 200.00, "estoque": 15}]
+produtos = []
 
 app = Flask(__name__)
 
@@ -13,9 +8,9 @@ app = Flask(__name__)
 @app.route("/", methods=["GET"])
 def mensagem():
     return jsonify({
-        "mensagem": "API E-commerce funcionando!",
+        "Status": "API E-commerce funcionando!",
         "Rotas": "/produtos    /produtos/id",
-        "modos": "GET, POST, PUT e DELETE."
+        "Modos": "GET, POST, PUT e DELETE."
     })
 
 #mostrar todos produtos criados
@@ -28,23 +23,30 @@ def listar_produtos():
 def criar_produtos():
     dados = request.get_json()
 
+    if not isinstance(dados, dict):
+        return jsonify({"mensagem": "Envie um JSON válido."}), 400
+
+    if not all(campo in dados for campo in ["nome", "preco", "estoque"]):
+        return jsonify({"mensagem": "Cadastre todos os campos."}), 400
+
+    if not isinstance(dados["nome"], str) or dados["nome"].strip() == "":
+        return jsonify({"mensagem": "O nome é obrigatório."}), 400
+
     ids = []
 
     for produto in produtos:
         ids.append(produto["id"])
-    
-    
-    novo_id = max(ids) + 1
 
-    print(ids)
-    print(novo_id)
+    if not ids:
+        novo_id = 1
+    else:
+        novo_id = max(ids) + 1
 
     novo_produto = {
         "id": novo_id,
         "nome": dados["nome"],
         "preco": dados["preco"],
-        "estoque": dados["estoque"],
-    }
+        "estoque": dados["estoque"]}
 
     produtos.append(novo_produto)
 
