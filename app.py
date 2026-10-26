@@ -32,6 +32,18 @@ def criar_produtos():
     if not isinstance(dados["nome"], str) or dados["nome"].strip() == "":
         return jsonify({"mensagem": "O nome é obrigatório."}), 400
 
+    if isinstance(dados["preco"], bool) or not isinstance(dados["preco"], (int, float)):
+        return jsonify({"mensagem": "O Preço deve ser um número."}), 400
+
+    if dados["preco"] < 0:
+        return jsonify({"mensagem": "O preço não pode ser negativo."}), 400
+
+    if isinstance(dados["estoque"], bool) or not isinstance(dados["estoque"], int):
+        return jsonify({"mensagem": "O estoque deve ser um número inteiro."}), 400
+
+    if dados["estoque"] < 0:
+        return jsonify({"mensagem": "O estoque não pode ser negativo."}), 400
+
     ids = []
 
     for produto in produtos:
@@ -64,6 +76,27 @@ def buscar_produtos(id):
 @app.route("/produtos/<int:id>", methods=["PUT"])
 def atualizar_produto(id):
     dados = request.get_json()
+
+    if not isinstance(dados, dict):
+        return jsonify({"mensagem": "Envie um JSON válido."}), 400
+
+    if not all(campo in dados for campo in ["nome", "preco", "estoque"]):
+        return jsonify({"mensagem": "Cadastre todos os campos."}), 400
+
+    if not isinstance(dados["nome"], str) or dados["nome"].strip() == "":
+        return jsonify({"mensagem": "O nome é obrigatório."}), 400
+
+    if isinstance(dados["preco"], bool) or not isinstance(dados["preco"], (int, float)):
+        return jsonify({"mensagem": "O preço deve ser um número."}), 400
+
+    if dados["preco"] < 0:
+        return jsonify({"mensagem": "O preço não poder ser negativo."}), 400
+
+    if isinstance(dados["estoque"], bool) or not isinstance(dados["estoque"], int):
+        return jsonify({"mensagem": "O estoque deve ser um número inteiro."}), 400
+
+    if dados["estoque"] < 0:
+        return jsonify({"mensagem": "O estoque não poder ser negativo."}), 400
 
     for produto in produtos:
         if produto["id"] == id:
