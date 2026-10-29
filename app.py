@@ -1,124 +1,323 @@
-from flask import Flask, jsonify, request
 
-produtos = []
+from flask import Flask, jsonify, request
+from conexao import conectar
+from math import isfinite
+from decimal import Decimal
 
 app = Flask(__name__)
 
-#rota principal da api
+
+# Converte valores Decimal do MySQL para float,
+# permitindo que sejam enviados como JSON.
+def preparar_produto(produto):
+    if produto is None:
+        return None
+
+    produto["preco"] = float(produto["preco"])
+    return produto
+
+
+# Valida os dados recebidos no POST e PUT.
+def validar_dados(dados):
+    if not isinstance(dados, dict):
+        return "Envie um JSON válido."
+
+    campos = ["nome", "preco", "estoque"]
+
+    if not all(campo in dados for campo in campos):
+        return "Informe todos os campos: nome, preco e estoque."
+
+    if not isinstance(dados["nome"], str) or not dados["nome"].strip():
+        return "O nome é obrigatório e deve ser um texto."
+
+    preco = dados["preco"]
+
+    if (
+        isinstance(preco, bool)
+        or not isinstance(preco, (int, float, Decimal))
+        or not isfinite(float(preco))
+        or preco < 0
+    ):
+        return "O preço deve ser um número válido e não negativo."
+
+    estoque = dados["estoque"]
+
+    if (
+        isinstance(estoque, bool)
+        or not isinstance(estoque, int)
+        or estoque < 0
+    ):
+        return "O estoque deve ser um número inteiro não negativo."
+
+    return None
+
+
+# Rota principal da API
 @app.route("/", methods=["GET"])
 def mensagem():
     return jsonify({
-        "Status": "API E-commerce funcionando!",
-        "Rotas": "/produtos    /produtos/id",
-        "Modos": "GET, POST, PUT e DELETE."
-    })
+        "status": "API E-commerce funcionando!",
+        "rotas": {
+            "listar_produtos": "GET /produtos",
+            "cadastrar_produto": "POST /produtos",
+            "buscar_produto": "GET /produtos/<id>",
+            "atualizar_produto": "PUT /produtos/<id>",
+            "excluir_produto": "DELETE /produtos/<id>"
+        }
+    }), 200
 
-#mostrar todos produtos criados
+
+# Listar todos os produtos
 @app.route("/produtos", methods=["GET"])
 def listar_produtos():
-    return jsonify(produtos)
+    conexao = None
+    cursor = None
 
-#criar um produto
+    try:
+        conexao = conectar()
+        cursor = conexao.cursor(dictionary=True)
+
+        cursor.execute("SELECT * FROM produtos")
+        produtos = cursor.fetchall()
+
+        produtos = [preparar_produto(p) for p in produtos]
+
+        return jsonify(produtos), 200
+
+    except Exception as erro:
+        print("Erro ao listar produtos:", erro)
+
+        return jsonify({
+            "erro": "Não foi possível listar os produtos."
+        }), 500
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if conexao is not None and conexao.is_connected():
+            conexao.close()
+
+
+# Cadastrar um produto
 @app.route("/produtos", methods=["POST"])
-def criar_produtos():
-    dados = request.get_json()
+def criar_produto():
+    dados = request.get_json(silent=True)
 
-    if not isinstance(dados, dict):
-        return jsonify({"mensagem": "Envie um JSON válido."}), 400
+    erro_validacao = validar_dados(dados)
 
-    if not all(campo in dados for campo in ["nome", "preco", "estoque"]):
-        return jsonify({"mensagem": "Cadastre todos os campos."}), 400
+    if erro_validacao:
+        return jsonify({"erro": erro_validacao}), 400
 
-    if not isinstance(dados["nome"], str) or dados["nome"].strip() == "":
-        return jsonify({"mensagem": "O nome é obrigatório."}), 400
+    conexao = None
+    cursor = None
 
-    if isinstance(dados["preco"], bool) or not isinstance(dados["preco"], (int, float)):
-        return jsonify({"mensagem": "O Preço deve ser um número."}), 400
+    try:
+        conexao = conectar()
+        cursor = conexao.cursor()
 
-    if dados["preco"] < 0:
-        return jsonify({"mensagem": "O preço não pode ser negativo."}), 400
+        sql = """
+            INSERT INTO produtos (nome, preco, estoque)
+            VALUES (%s, %s, %s)
+        """
 
-    if isinstance(dados["estoque"], bool) or not isinstance(dados["estoque"], int):
-        return jsonify({"mensagem": "O estoque deve ser um número inteiro."}), 400
+        valores = (
+            dados["nome"].strip(),
+            dados["preco"],
+            dados["estoque"]
+        )
 
-    if dados["estoque"] < 0:
-        return jsonify({"mensagem": "O estoque não pode ser negativo."}), 400
+        cursor.execute(sql, valores)
+        conexao.commit()
 
-    ids = []
+        novo_produto = {
+            "id": cursor.lastrowid,
+            "nome": dados["nome"].strip(),
+            "preco": float(dados["preco"]),
+            "estoque": dados["estoque"]
+        }
 
-    for produto in produtos:
-        ids.append(produto["id"])
+        return jsonify(novo_produto), 201
 
-    if not ids:
-        novo_id = 1
-    else:
-        novo_id = max(ids) + 1
+    except Exception as erro:
+        if conexao is not None and conexao.is_connected():
+            conexao.rollback()
 
-    novo_produto = {
-        "id": novo_id,
-        "nome": dados["nome"],
-        "preco": dados["preco"],
-        "estoque": dados["estoque"]}
+        print("Erro ao cadastrar produto:", erro)
 
-    produtos.append(novo_produto)
+        return jsonify({
+            "erro": "Não foi possível cadastrar o produto."
+        }), 500
 
-    return jsonify(novo_produto), 201
+    finally:
+        if cursor is not None:
+            cursor.close()
 
-#listar produto especifico
+        if conexao is not None and conexao.is_connected():
+            conexao.close()
+
+
+# Buscar um produto pelo ID
 @app.route("/produtos/<int:id>", methods=["GET"])
-def buscar_produtos(id):
-    for produto in produtos:
-        if produto["id"] == id:
-            return jsonify (produto)
-    return jsonify({"erro": "produto não encontrado"}), 404
+def buscar_produto(id):
+    conexao = None
+    cursor = None
 
-#atualizar produtos
+    try:
+        conexao = conectar()
+        cursor = conexao.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT * FROM produtos WHERE id = %s",
+            (id,)
+        )
+
+        produto = cursor.fetchone()
+
+        if produto is None:
+            return jsonify({
+                "erro": "Produto não encontrado."
+            }), 404
+
+        return jsonify(preparar_produto(produto)), 200
+
+    except Exception as erro:
+        print("Erro ao buscar produto:", erro)
+
+        return jsonify({
+            "erro": "Não foi possível buscar o produto."
+        }), 500
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if conexao is not None and conexao.is_connected():
+            conexao.close()
+
+
+# Atualizar um produto
 @app.route("/produtos/<int:id>", methods=["PUT"])
 def atualizar_produto(id):
-    dados = request.get_json()
+    dados = request.get_json(silent=True)
 
-    if not isinstance(dados, dict):
-        return jsonify({"mensagem": "Envie um JSON válido."}), 400
+    erro_validacao = validar_dados(dados)
 
-    if not all(campo in dados for campo in ["nome", "preco", "estoque"]):
-        return jsonify({"mensagem": "Cadastre todos os campos."}), 400
+    if erro_validacao:
+        return jsonify({"erro": erro_validacao}), 400
 
-    if not isinstance(dados["nome"], str) or dados["nome"].strip() == "":
-        return jsonify({"mensagem": "O nome é obrigatório."}), 400
+    conexao = None
+    cursor = None
 
-    if isinstance(dados["preco"], bool) or not isinstance(dados["preco"], (int, float)):
-        return jsonify({"mensagem": "O preço deve ser um número."}), 400
+    try:
+        conexao = conectar()
+        cursor = conexao.cursor(dictionary=True)
 
-    if dados["preco"] < 0:
-        return jsonify({"mensagem": "O preço não poder ser negativo."}), 400
+        cursor.execute(
+            "SELECT * FROM produtos WHERE id = %s",
+            (id,)
+        )
 
-    if isinstance(dados["estoque"], bool) or not isinstance(dados["estoque"], int):
-        return jsonify({"mensagem": "O estoque deve ser um número inteiro."}), 400
+        produto = cursor.fetchone()
 
-    if dados["estoque"] < 0:
-        return jsonify({"mensagem": "O estoque não poder ser negativo."}), 400
+        if produto is None:
+            return jsonify({
+                "erro": "Produto não encontrado."
+            }), 404
 
-    for produto in produtos:
-        if produto["id"] == id:
-            produto["nome"] = dados["nome"]
-            produto["preco"] = dados["preco"]
-            produto["estoque"] = dados["estoque"]
+        sql = """
+            UPDATE produtos
+            SET nome = %s, preco = %s, estoque = %s
+            WHERE id = %s
+        """
 
-            return jsonify(produto)
-    return jsonify({"erro": "produto não encontrado"}), 404
+        valores = (
+            dados["nome"].strip(),
+            dados["preco"],
+            dados["estoque"],
+            id
+        )
+
+        cursor.execute(sql, valores)
+        conexao.commit()
+
+        produto_atualizado = {
+            "id": id,
+            "nome": dados["nome"].strip(),
+            "preco": float(dados["preco"]),
+            "estoque": dados["estoque"]
+        }
+
+        return jsonify(produto_atualizado), 200
+
+    except Exception as erro:
+        if conexao is not None and conexao.is_connected():
+            conexao.rollback()
+
+        print("Erro ao atualizar produto:", erro)
+
+        return jsonify({
+            "erro": "Não foi possível atualizar o produto."
+        }), 500
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if conexao is not None and conexao.is_connected():
+            conexao.close()
 
 
-#deletar produtos
+# Excluir um produto
 @app.route("/produtos/<int:id>", methods=["DELETE"])
 def excluir_produto(id):
+    conexao = None
+    cursor = None
 
-    for produto in produtos:
-        if produto["id"] == id:
-            produtos.remove(produto)
+    try:
+        conexao = conectar()
+        cursor = conexao.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT * FROM produtos WHERE id = %s",
+            (id,)
+        )
+
+        produto = cursor.fetchone()
+
+        if produto is None:
             return jsonify({
-                "produto": produto,
-                "mensagem": "Produto removido."})
-    return jsonify({"erro": "produto não encontrado."}), 404
+                "erro": "Produto não encontrado."
+            }), 404
+
+        cursor.execute(
+            "DELETE FROM produtos WHERE id = %s",
+            (id,)
+        )
+
+        conexao.commit()
+
+        return jsonify({
+            "mensagem": "Produto removido com sucesso.",
+            "produto": preparar_produto(produto)
+        }), 200
+
+    except Exception as erro:
+        if conexao is not None and conexao.is_connected():
+            conexao.rollback()
+
+        print("Erro ao excluir produto:", erro)
+
+        return jsonify({
+            "erro": "Não foi possível excluir o produto."
+        }), 500
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if conexao is not None and conexao.is_connected():
+            conexao.close()
 
 
 if __name__ == "__main__":
